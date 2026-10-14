@@ -183,7 +183,7 @@ terraform apply
 $(terraform output -raw configure_kubectl)
 ```
 
-Creates a VPC (`10.30.0.0/16`) with 2 public and 2 private subnets across two AZs, one NAT gateway, an EKS 1.34 cluster with a 2-node `t3.medium` managed node group, the EBS CSI driver (so Postgres gets a persistent volume), and an IAM role that GitHub Actions can assume via OIDC.
+Creates a VPC (`10.30.0.0/16`) with 2 public and 2 private subnets across two AZs, one NAT gateway, an EKS 1.34 cluster with a 2-node `m7i-flex.large` managed node group, the EBS CSI driver (so Postgres gets a persistent volume), and an IAM role that GitHub Actions can assume via OIDC.
 
 > **Always run `terraform destroy` after the demo.** EKS, the NAT gateway and the load balancer bill by the hour.
 

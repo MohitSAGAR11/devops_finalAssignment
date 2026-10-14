@@ -9,7 +9,7 @@ Provisions everything the app needs in AWS (default region `ap-south-1`):
 | Private subnets (2) | Worker nodes; tagged `kubernetes.io/role/internal-elb` |
 | NAT gateway (1) | Outbound internet for nodes (pulling images from GHCR) |
 | EKS cluster | Kubernetes `1.34`, public API endpoint, IRSA enabled |
-| Managed node group | 2 × `t3.medium` (AL2023), scales 2–3 |
+| Managed node group | 2 × `m7i-flex.large` (AL2023), scales 2–3 |
 | Add-ons | CoreDNS, kube-proxy, VPC CNI, EBS CSI driver (with its own IRSA role) |
 | GitHub OIDC deploy role | Optional; lets the CI deploy job reach EKS without stored AWS keys |
 
@@ -39,5 +39,5 @@ kubectl delete pvc --all -n inventory
 terraform destroy
 ```
 
-> **Cost warning:** the EKS control plane (~$0.10/h), NAT gateway (~$0.06/h + data), 2 × t3.medium and the
+> **Cost warning:** the EKS control plane (~$0.10/h), NAT gateway (~$0.06/h + data), 2 × m7i-flex.large and the
 > ingress load balancer all bill while running. Destroy as soon as grading/demo is done.

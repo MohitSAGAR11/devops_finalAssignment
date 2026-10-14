@@ -29,9 +29,9 @@ variable "vpc_cidr" {
 }
 
 variable "node_instance_types" {
-  description = "Instance types for the managed node group."
+  description = "Instance types for the managed node group (m7i-flex.large is allowed on the AWS Free plan)."
   type        = list(string)
-  default     = ["t3.medium"]
+  default     = ["m7i-flex.large"]
 }
 
 variable "node_desired_size" {

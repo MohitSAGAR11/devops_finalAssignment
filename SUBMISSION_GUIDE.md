@@ -233,7 +233,7 @@ Click **Build, scan & push images**, then expand **Trivy scan — backend** (and
 
 ## PART E — Terraform: create the AWS infrastructure (M7)
 
-> **💸 Cost:** from `terraform apply` until `terraform destroy`, AWS charges roughly **$0.30–0.35 per hour** (≈ $8/day): EKS control plane, NAT gateway, 2 × t3.medium, a load balancer. Do Parts E → K in one sitting if you can, then destroy.
+> **💸 Cost:** from `terraform apply` until `terraform destroy`, AWS charges roughly **$0.30–0.35 per hour** (≈ $8/day): EKS control plane, NAT gateway, 2 × m7i-flex.large, a load balancer. Do Parts E → K in one sitting if you can, then destroy.
 
 ### E1. AWS credentials
 
