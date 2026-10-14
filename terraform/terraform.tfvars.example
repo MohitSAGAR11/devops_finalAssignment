@@ -14,5 +14,9 @@ node_max_size       = 3
 # Enables the keyless GitHub Actions deploy role (owner/repo, exactly as on GitHub).
 github_repository = "MohitSAGAR11/devops_finalAssignment"
 
+# Newer GitHub repos send an immutable OIDC subject. Look yours up with:
+#   gh api repos/<owner>/<repo>/actions/oidc/customization/sub --jq .sub_claim_prefix
+github_oidc_subject_prefix = "repo:MohitSAGAR11@180327610/devops_finalAssignment@1409118482"
+
 # Set to false if this AWS account already has the token.actions.githubusercontent.com provider.
 create_github_oidc_provider = true

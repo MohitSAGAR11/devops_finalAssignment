@@ -44,11 +44,15 @@ data "aws_iam_policy_document" "github_assume" {
       values   = ["sts.amazonaws.com"]
     }
 
-    # Only pushes to main in this one repository may deploy.
+    # Only pushes to main in this one repository may deploy. Newer repos use GitHub's
+    # immutable subject ("repo:owner@<id>/name@<id>"), so accept that form when configured.
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repository}:ref:refs/heads/main"]
+      values = compact([
+        "repo:${var.github_repository}:ref:refs/heads/main",
+        var.github_oidc_subject_prefix == "" ? "" : "${var.github_oidc_subject_prefix}:ref:refs/heads/main",
+      ])
     }
   }
 }
