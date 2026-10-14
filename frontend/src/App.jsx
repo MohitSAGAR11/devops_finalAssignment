@@ -76,7 +76,7 @@ export default function App() {
           <span className="logo" aria-hidden="true">▣</span>
           <div>
             <strong>Inventory Manager</strong>
-            <small>Warehouse stock control</small>
+            <small>Warehouse stock control · v2</small>
           </div>
         </div>
         <button className="btn primary" onClick={() => setEditing({})}>
