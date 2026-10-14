@@ -1,808 +1,278 @@
-# Session 21 — DevOps Final Capstone: TaskBoard (Python)
+# Inventory Manager — DevOps Capstone
 
-## 1. What we are building
+Inventory Manager is a small warehouse stock-control app. It tracks products by SKU, records stock coming in and going out, flags items that have fallen below their reorder level, and shows what the stock on hand is worth.
 
-TaskBoard is a small but realistic SaaS-style project management application:
-
-- React + Vite frontend
-- Responsive HTML/JSX + CSS UI
-- FastAPI Python backend
-- PostgreSQL database
-- SQLAlchemy ORM
-- Alembic database migrations
-- REST APIs
-- Pytest automated tests
-- Docker containers
-- GitHub Actions CI/CD
-- Trivy container security scanning
-- GitHub Container Registry
-- Terraform for AWS infrastructure
-- AWS VPC + EKS
-- Kubernetes
-- Helm
-- Ingress
-- HPA
-- Prometheus + Grafana
-- Health/readiness endpoints
-- Troubleshooting exercises
-
-The point is not to teach isolated tools. The point is to show how a real application travels from a developer laptop to a monitored Kubernetes environment.
+The app is the vehicle; the point of the project is the delivery pipeline around it: from a commit on a laptop, through automated tests, container builds and a security gate, into a Helm release on AWS EKS provisioned with Terraform, monitored with Prometheus and Grafana.
 
 ```text
-Developer
-   |
-   v
-Git / GitHub
-   |
-   v
-GitHub Actions
-   |-- pytest
-   |-- frontend build
-   |-- Docker build
-   |-- Trivy scan
-   `-- push images to GHCR
-              |
-              v
-        Terraform
-              |
-       AWS VPC + EKS
-              |
-              v
-            Helm
-              |
-      +-------+--------+
-      |                |
-   Frontend          Backend
-    React            FastAPI
-      |                |
-      +-------> PostgreSQL
-              |
-       Prometheus
-              |
-           Grafana
+ git push ──► GitHub Actions ─┬─ pytest + frontend build + helm lint + terraform validate
+                              ├─ docker build (backend, frontend), tag = commit SHA
+                              ├─ Trivy scan ── HIGH/CRITICAL found? ──► pipeline fails, nothing pushed
+                              ├─ push to GHCR
+                              └─ helm upgrade --install ──► EKS (OIDC role, no stored AWS keys)
+
+ Terraform ──► AWS: VPC (2 public + 2 private subnets, NAT) ──► EKS + managed node group
+
+ EKS ─ ingress-nginx (LoadBalancer)
+        ├── /      ──► frontend Service ──► React + Nginx pods (×2)
+        └── /api   ──► backend Service  ──► FastAPI pods (×2, HPA 2→8) ──► PostgreSQL StatefulSet (EBS)
+                                              ▲
+                     Prometheus (ServiceMonitor scrapes /metrics) ──► Grafana dashboard
 ```
 
 ---
 
-## 2. Repository structure
+## Features
+
+| Area | What it does |
+|---|---|
+| Products | Create, edit, delete products with SKU, category, supplier, unit price and reorder level |
+| Stock movements | One-click **receive (+)** / **ship (−)**; stock can never go below zero |
+| Reorder alerts | Products at or below their reorder level are flagged *Low stock*, zero is *Out of stock* |
+| Dashboard | Product count, units on hand, items needing reorder, total inventory value (₹) |
+| Search & filter | By name / SKU / supplier, by category, or "needs reorder only" |
+| Responsive UI | Table on desktop, stacked cards on phones |
+
+## Tech stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | React 18 + Vite, served by unprivileged Nginx |
+| Backend | FastAPI, SQLAlchemy 2, Pydantic 2 |
+| Database | PostgreSQL 16, schema managed by Alembic migrations |
+| Tests | Pytest + FastAPI TestClient on an isolated SQLite database |
+| Containers | Docker (multi-stage frontend, non-root users), Docker Compose |
+| CI/CD | GitHub Actions → GitHub Container Registry |
+| Security | Trivy image scanning; SHA-pinned actions; OIDC instead of AWS keys |
+| Infrastructure | Terraform: AWS VPC + EKS + EBS CSI driver |
+| Orchestration | Kubernetes, Helm chart, ingress-nginx, HPA, metrics-server |
+| Observability | Prometheus (kube-prometheus-stack), Grafana, `prometheus-fastapi-instrumentator` |
+
+## Repository layout
 
 ```text
-session21-devops-capstone-final/
-├── frontend/                 # React application and CSS
-├── backend/                  # FastAPI application
-│   ├── app/                  # API, models, schemas, DB config
-│   ├── tests/                # Pytest tests
-│   └── alembic/              # DB migrations
-├── docker-compose.yml        # Full local stack
-├── terraform/                # AWS VPC + EKS infrastructure
-├── helm/taskboard/            # Kubernetes package
-├── k8s/                      # namespace/bootstrap manifests
-├── monitoring/               # Prometheus/Grafana values
-├── troubleshooting/          # deliberately broken manifests
-├── scripts/                  # load-test helpers
-└── .github/workflows/        # CI/CD
+.
+├── backend/                  FastAPI service
+│   ├── app/                  main.py (routes), models.py, schemas.py, db.py, config.py
+│   ├── alembic/versions/     0001 create products, 0002 add sku/price/reorder level
+│   ├── tests/                pytest suite (19 tests) + conftest.py
+│   └── Dockerfile            python:3.12-slim, runs as uid 10001
+├── frontend/                 React app
+│   ├── src/                  App.jsx, ProductForm.jsx, api.js, styles.css
+│   ├── nginx/                Nginx config template (BACKEND_URL injected at start)
+│   └── Dockerfile            node build stage → nginx-unprivileged runtime (uid 101)
+├── docker-compose.yml        postgres + backend + frontend
+├── .github/workflows/        ci-cd.yml
+├── terraform/                VPC, EKS, EBS CSI IRSA, GitHub OIDC deploy role
+├── helm/inventory/           Helm chart (values.yaml, values-dev.yaml, values-prod.yaml)
+├── k8s/                      namespaces, default gp3 StorageClass for EKS
+├── monitoring/               prometheus-values.yaml, grafana-values.yaml
+├── scripts/                  bootstrap-cluster.sh, load-test.sh
+└── troubleshooting/          deliberately broken manifests for debugging practice
 ```
 
 ---
 
-# PART A — UNDERSTAND THE APPLICATION
+## REST API
 
-## 3. Frontend
+| Method | Path | Description |
+|---|---|---|
+| GET | `/health` | Liveness: process is up |
+| GET | `/ready` | Readiness: database reachable |
+| GET | `/metrics` | Prometheus metrics |
+| GET | `/api/products` | List products (newest first); `?category=` filter |
+| GET | `/api/products/stats` | Totals, low stock, out of stock, inventory value |
+| GET | `/api/products/{id}` | One product |
+| POST | `/api/products` | Create (409 on duplicate SKU, 422 on invalid input) |
+| PUT | `/api/products/{id}` | Partial update |
+| POST | `/api/products/{id}/adjust` | `{"delta": 10}` receive / `{"delta": -3}` ship |
+| DELETE | `/api/products/{id}` | Delete |
 
-The frontend is intentionally closer to a real SaaS dashboard than a tutorial CRUD page.
-
-It contains:
-
-- dark sidebar
-- workspace navigation
-- dashboard header
-- KPI cards
-- task table
-- status filters
-- priority badges
-- activity feed
-- pipeline indicator
-- create-task modal
-- responsive CSS
-- loading and backend-error states
-
-The browser calls `/api/tasks` and `/api/tasks/stats`.
-
-The browser does **not** need to know the internal backend hostname. Nginx and Kubernetes Ingress handle routing.
-
-## 4. Backend
-
-FastAPI exposes:
-
-```text
-GET    /
-GET    /health
-GET    /ready
-GET    /metrics
-
-GET    /api/tasks
-GET    /api/tasks/{id}
-POST   /api/tasks
-PUT    /api/tasks/{id}
-DELETE /api/tasks/{id}
-GET    /api/tasks/stats
-```
-
-Swagger documentation is available at `/docs` when the backend is running.
-
-### Why `/health`?
-
-A container can be alive while its application is unhealthy. `/health` gives Kubernetes a cheap liveness check.
-
-### Why `/ready`?
-
-Readiness answers a different question: **can this application serve traffic now?** The endpoint verifies database access before returning READY.
-
-### Why `/metrics`?
-
-Prometheus needs machine-readable metrics. The FastAPI Prometheus instrumentator exposes request metrics for monitoring.
+Interactive docs: `http://localhost:8000/docs`.
 
 ---
 
-# PART B — RUN IT LOCALLY
+## Run locally
 
-## 5. Fastest method: Docker Compose
-
-Requirements:
-
-- Docker Desktop / Docker Engine
-- Docker Compose
-
-Run:
+### Docker Compose (recommended)
 
 ```bash
 docker compose up --build
 ```
 
-Open:
+| URL | What |
+|---|---|
+| http://localhost:3000 | Inventory Manager UI |
+| http://localhost:8000/docs | Swagger UI |
+| http://localhost:8000/metrics | Prometheus metrics |
 
-```text
-http://localhost:3000
-```
+Postgres is exposed on `localhost:5433` (user/password/db `inventory`). Stop with `docker compose down` (add `-v` to wipe the database).
 
-Backend:
-
-```text
-http://localhost:8000/docs
-http://localhost:8000/health
-http://localhost:8000/metrics
-```
-
-Stop:
-
-```bash
-docker compose down
-```
-
-Delete database volume too:
-
-```bash
-docker compose down -v
-```
-
----
-
-## 6. Run backend directly
-
-Requirements:
-
-- Python 3.12+
-- PostgreSQL
+### Without Docker
 
 ```bash
 cd backend
-python -m venv .venv
-source .venv/bin/activate
+python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-```
-
-Set the database connection:
-
-```bash
-export DATABASE_URL='postgresql+psycopg://taskboard:taskboard@localhost:5432/taskboard'
-```
-
-Run migrations:
-
-```bash
+cp .env.example .env                                    # points at Postgres on localhost:5433
 alembic upgrade head
-```
-
-Start FastAPI:
-
-```bash
 uvicorn app.main:app --reload --port 8000
-```
 
-Test:
-
-```bash
-curl http://localhost:8000/health
-curl http://localhost:8000/api/tasks
-```
-
-Open:
-
-```text
-http://localhost:8000/docs
+cd ../frontend
+npm ci
+npm run dev                                             # http://localhost:5173, proxies /api to :8000
 ```
 
 ---
 
-# PART C — TESTING
-
-## 7. Pytest
+## Testing
 
 ```bash
 cd backend
-pytest -q
+pytest -v
 ```
 
-Students should understand why tests happen **before Docker images are pushed**.
-
-```text
-Bad code
-  ↓
-pytest fails
-  ↓
-Pipeline stops
-  ↓
-No broken image is promoted
-```
-
-This is the first quality gate.
+19 tests cover health/readiness/metrics, create/list/get/update/delete, input validation, duplicate SKUs, stock adjustments (including refusing to go negative) and the stats calculation. `tests/conftest.py` points `DATABASE_URL` at a throwaway SQLite file and recreates the schema for every test, so the suite never touches the real Postgres database.
 
 ---
 
-# PART D — GIT AND GITHUB
+## CI/CD — `.github/workflows/ci-cd.yml`
 
-## 8. Initialize Git
+Runs on every push and pull request to `main`.
 
-```bash
-git init
-git add .
-git commit -m "initial TaskBoard application"
-git branch -M main
-git remote add origin <YOUR_GITHUB_REPO>
-git push -u origin main
-```
+| Job | Steps |
+|---|---|
+| `test` | Install deps → `pytest -v` (any failure stops the pipeline) → `npm ci && npm run build` |
+| `lint-infra` | `helm lint` (dev + prod values), `terraform fmt -check`, `terraform validate` |
+| `build-scan-push` | Build both images tagged `ghcr.io/<owner>/inventory-{backend,frontend}:<commit-sha>` → Trivy scan both → push to GHCR (push to `main` only) |
+| `deploy` | Assume AWS role via GitHub OIDC → `aws eks update-kubeconfig` → `helm upgrade --install` with the new SHA tags → print rollout |
 
-Explain:
+Images are tagged with the commit SHA, never `latest`, so every running pod can be traced back to the exact commit that produced it, and rolling back is just redeploying an older SHA.
 
-- Git = version control
-- GitHub = remote collaboration/source platform
-- commit = immutable project checkpoint
-- branch = isolated line of development
-- pull request = controlled change review
+### One-time GitHub setup
 
----
-
-# PART E — DOCKER
-
-## 9. Backend Dockerfile
-
-The backend image:
-
-1. starts from Python
-2. installs dependencies
-3. copies Alembic
-4. copies application code
-5. creates a non-root user
-6. exposes port 8000
-7. runs migrations
-8. starts Uvicorn
-
-Build:
-
-```bash
-docker build -t taskboard-backend:local ./backend
-```
-
-Run with a reachable PostgreSQL instance:
-
-```bash
-docker run --rm -p 8000:8000 \
-  -e DATABASE_URL='postgresql+psycopg://taskboard:taskboard@host.docker.internal:5432/taskboard' \
-  taskboard-backend:local
-```
-
-## 10. Frontend Dockerfile
-
-The frontend uses a multi-stage build:
-
-```text
-Node
-  ↓
-npm build
-  ↓
-static dist/
-  ↓
-Nginx runtime image
-```
-
-This keeps build tooling out of the final runtime image.
-
-Build:
-
-```bash
-docker build -t taskboard-frontend:local ./frontend
-```
+1. **Settings → Secrets and variables → Actions**
+   - Secret `AWS_DEPLOY_ROLE_ARN`: from `terraform output github_deploy_role_arn`
+   - Secret `POSTGRES_PASSWORD`: any strong password (keep it the same between deploys)
+   - Variable `EKS_CLUSTER_NAME`: `inventory-eks` (delete it after `terraform destroy` so the deploy job is skipped)
+   - Variable `AWS_REGION`: `ap-south-1` (optional, this is the default)
+2. After the first successful push, open each package under **Your profile → Packages** (`inventory-backend`, `inventory-frontend`) and set visibility to **Public** so EKS can pull without credentials. (Alternatively create a `ghcr-pull` docker-registry secret and set `imagePullSecrets`.)
 
 ---
 
-# PART F — CI/CD
+## DevSecOps — Trivy
 
-## 11. GitHub Actions pipeline
+Both images are scanned by Trivy in the pipeline before they are pushed. The scan looks at OS packages in the base image (Debian for the backend, Alpine for the frontend) and at application libraries (Python packages, npm packages left in the image). The job fails if any **HIGH** or **CRITICAL** vulnerability with an available fix is found (`exit-code: 1`, `ignore-unfixed: true`), so a vulnerable image never reaches the registry or the cluster.
 
-The workflow has three conceptual stages:
+**What the scan actually caught:** the first scan of this project failed. The backend shipped `starlette 0.41.3` (pulled in by an older FastAPI), which has **CVE-2025-62727**. Starlette merged overlapping HTTP `Range` headers inefficiently, so a single request with a crafted `Range` header could burn CPU and deny service to other users. The fix is in Starlette 0.49.1. The frontend's `nginx:1.27-alpine` base also carried fixable HIGH CVEs in `libxml2`, `musl`, `zlib` and `nghttp2`. The fix was upgrading FastAPI/Starlette, moving to `nginx-unprivileged:1.30-alpine` and running `apk upgrade` at build time. Both images now scan clean (0 HIGH/CRITICAL).
 
-```text
-TEST
- ↓
-BUILD + SECURITY SCAN + PUSH
- ↓
-DEPLOY
-```
-
-### Test job
-
-- checkout
-- setup Python
-- install requirements
-- run pytest
-- setup Node
-- build React frontend
-
-### Build/scan/push job
-
-- build backend image
-- build frontend image
-- scan both with Trivy
-- push to GHCR
-
-### Deploy job
-
-- install Helm
-- configure kubectl
-- run `helm upgrade --install`
-
-The image tag is the Git commit SHA.
-
-That means:
-
-```text
-commit A → image A
-commit B → image B
-commit C → image C
-```
-
-This gives traceability from production back to source code.
+**Supply-chain hardening:** every GitHub Action is pinned to a full commit SHA. In March 2026 attackers force-pushed malicious code over most `aquasecurity/trivy-action` version tags (CVE-2026-33634); workflows referencing a tag ran the attacker's code, while a SHA can't be rewritten.
 
 ---
 
-# PART G — SECURITY SCANNING
+## Infrastructure — Terraform (AWS)
 
-## 12. Trivy
-
-The pipeline scans container images for HIGH and CRITICAL vulnerabilities.
-
-A security scanner is not a magic guarantee of security. It is one automated control in the pipeline.
-
-Students should understand:
-
-```text
-SAST
-Dependency scanning
-Secret scanning
-Container scanning
-Runtime security
-```
-
-These are different security layers.
-
----
-
-# PART H — TERRAFORM
-
-## 13. Why Terraform?
-
-Kubernetes only manages workloads. It does not create the AWS network and EKS infrastructure in this project.
-
-Terraform creates:
-
-```text
-AWS
- ├── VPC
- ├── public subnets
- ├── private subnets
- ├── NAT gateway
- └── EKS cluster
-       └── managed worker nodes
-```
-
-Go to Terraform:
+See [`terraform/README.md`](terraform/README.md) for details.
 
 ```bash
 cd terraform
+cp terraform.tfvars.example terraform.tfvars
 terraform init
 terraform plan
 terraform apply
+$(terraform output -raw configure_kubectl)
 ```
 
-The default region is `ap-south-1`.
+Creates a VPC (`10.30.0.0/16`) with 2 public and 2 private subnets across two AZs, one NAT gateway, an EKS 1.34 cluster with a 2-node `t3.medium` managed node group, the EBS CSI driver (so Postgres gets a persistent volume), and an IAM role that GitHub Actions can assume via OIDC.
 
-After EKS is created, configure kubectl using the command shown by AWS/Terraform output.
-
-Destroy when finished:
-
-```bash
-terraform destroy
-```
-
-### Important teaching point
-
-Terraform is **Infrastructure as Code**.
-
-Instead of manually clicking:
-
-```text
-AWS Console → VPC → Subnet → EKS → Nodes...
-```
-
-we describe infrastructure in code and let Terraform reconcile the desired state.
+> **Always run `terraform destroy` after the demo.** EKS, the NAT gateway and the load balancer bill by the hour.
 
 ---
 
-# PART I — KUBERNETES
-
-## 14. Namespace
+## Kubernetes + Helm
 
 ```bash
-kubectl apply -f k8s/namespace.yaml
+# once per cluster: namespaces, gp3 StorageClass, ingress-nginx, metrics-server, Prometheus + Grafana
+./scripts/bootstrap-cluster.sh
+
+# deploy (CI does this automatically on every push to main)
+helm upgrade --install inventory ./helm/inventory \
+  -n inventory --create-namespace \
+  -f helm/inventory/values-prod.yaml \
+  --set backend.image.tag=<commit-sha> --set frontend.image.tag=<commit-sha> \
+  --set-string postgres.password=<password>
+
+kubectl get pods -n inventory
+kubectl get svc -n inventory
+kubectl get ingress,hpa -n inventory
+helm list -n inventory
 ```
 
-A namespace provides logical isolation for the application.
+The chart (`helm/inventory`) deploys:
 
-## 15. Helm
+| Resource | Notes |
+|---|---|
+| `inventory-backend` Deployment | 2+ replicas, `/ready` readiness + `/health` liveness probes, non-root, read-only root FS, waits for Postgres before migrating |
+| `inventory-frontend` Deployment | 2 replicas, non-root Nginx on 8080 |
+| `inventory-postgres` StatefulSet | 1 replica, PVC on gp3 EBS, credentials from a Secret |
+| ClusterIP Services | backend :8000, frontend :80, postgres :5432 |
+| Ingress | `/` → frontend, `/api` → backend (class `nginx`) |
+| HorizontalPodAutoscaler | backend, 60 % CPU target, 2–8 replicas |
+| ServiceMonitor + dashboard ConfigMap | picked up by Prometheus and Grafana automatically |
 
-Instead of maintaining many manually edited YAML files, Helm turns the Kubernetes deployment into a reusable package.
+Every backend pod runs `alembic upgrade head` before starting. A Postgres advisory lock in `alembic/env.py` makes concurrent pods migrate one at a time instead of racing.
+
+Open the app at the ingress load balancer hostname:
 
 ```bash
-helm upgrade --install taskboard ./helm/taskboard \
-  --namespace taskboard \
-  --create-namespace
+kubectl get svc -n ingress-nginx ingress-nginx-controller \
+  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
 ```
 
-Important Helm concepts:
-
-- Chart
-- values
-- templates
-- release
-- upgrade
-- rollback
+For a local cluster (minikube/kind with ingress-nginx) use `-f helm/inventory/values-dev.yaml` and map `inventory.local` in your hosts file.
 
 ---
 
-# PART J — KUBERNETES COMPONENTS
+## Observability — Prometheus + Grafana
 
-## 16. Deployment
+The backend exposes request count, latency histograms and sizes at `/metrics`. A ServiceMonitor tells Prometheus to scrape it every 15 s, and the Grafana sidecar loads the bundled **Inventory Manager — API** dashboard:
 
-The Deployment manages backend/frontend Pods.
+| Panel | Query idea |
+|---|---|
+| Backend pods up | `sum(up{app="inventory-manager"})` |
+| Requests / sec and by endpoint | `rate(http_requests_total[1m])` |
+| 5xx error rate | 5xx requests ÷ all requests |
+| p95 latency (overall and per endpoint) | `histogram_quantile(0.95, …)` |
+| Responses by status class | 2xx / 4xx / 5xx |
+| Backend CPU per pod | the signal the HPA scales on |
 
-If a Pod dies:
-
-```text
-Deployment
-   ↓
-creates replacement Pod
+```bash
+kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090   # Status → Targets
+kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3001:80        # admin / your password
+URL=http://<ingress-host> ./scripts/load-test.sh                                    # generate traffic
+kubectl get hpa -n inventory -w                                                     # watch it scale
 ```
-
-## 17. Service
-
-Pods are ephemeral. A Service provides stable networking.
-
-```text
-Frontend → backend Service → backend Pods
-```
-
-## 18. PostgreSQL
-
-For the classroom/local Kubernetes demo, PostgreSQL is deployed inside the cluster with a PVC.
-
-For production AWS architecture, students should understand the tradeoff between running PostgreSQL in Kubernetes and using a managed database such as Amazon RDS.
 
 ---
 
-# PART K — INGRESS
+## Troubleshooting lab
 
-## 19. Ingress
-
-The application has two logical routes:
-
-```text
-/taskboard.local/
-      ↓
-React frontend
-
-/taskboard.local/api
-      ↓
-FastAPI backend
-```
-
-Enable ingress with the dev values:
-
-```bash
-helm upgrade --install taskboard ./helm/taskboard \
-  -n taskboard \
-  -f helm/taskboard/values-dev.yaml
-```
-
-Students should understand that an Ingress resource is only configuration. An Ingress Controller must actually implement it.
+| Manifest | Symptom | How to diagnose |
+|---|---|---|
+| `troubleshooting/broken-image.yaml` | Pod stuck in `ImagePullBackOff` | `kubectl describe pod` → events show the tag doesn't exist |
+| `troubleshooting/broken-service.yaml` | Service has no endpoints | `kubectl get endpoints` is empty; compare its selector with `kubectl get pods --show-labels` |
 
 ---
 
-# PART L — HPA
-
-## 20. Horizontal Pod Autoscaler
-
-The HPA can scale the backend based on CPU utilization.
-
-```text
-low traffic
-   ↓
-2 Pods
-
-high CPU
-   ↓
-3 Pods
-   ↓
-4 Pods
-   ↓
-...
-```
-
-Inspect:
-
-```bash
-kubectl get hpa -n taskboard
-```
-
-HPA requires resource requests and a metrics provider such as Metrics Server.
-
-A normal health request may not create enough CPU pressure to demonstrate scaling. For a classroom demo, use a controlled load generator and watch the metrics.
-
----
-
-# PART M — MONITORING
-
-## 21. Prometheus
-
-Prometheus collects metrics from the FastAPI `/metrics` endpoint.
-
-The ServiceMonitor tells the Prometheus Operator what to scrape.
-
-## 22. Grafana
-
-Grafana visualizes the collected metrics.
-
-Useful questions:
-
-- How many HTTP requests are arriving?
-- Which endpoint is slow?
-- Are errors increasing?
-- Is the application receiving traffic?
-- Is CPU increasing?
-- Is HPA scaling?
-
----
-
-# PART N — TROUBLESHOOTING LAB
-
-## 23. Broken image
-
-Apply:
-
-```bash
-kubectl apply -f troubleshooting/broken-image.yaml
-```
-
-Then:
-
-```bash
-kubectl get pods
-kubectl describe pod <pod-name>
-kubectl get events --sort-by=.lastTimestamp
-```
-
-Expected investigation:
-
-```text
-ImagePullBackOff
-      ↓
-describe Pod
-      ↓
-wrong image/tag
-      ↓
-fix deployment
-```
-
-## 24. Broken Service
-
-Apply:
-
-```bash
-kubectl apply -f troubleshooting/broken-service.yaml
-```
-
-Investigate:
-
-```bash
-kubectl get svc
-kubectl get endpoints
-kubectl get pods --show-labels
-```
-
-The key lesson is that a Service selects Pods using labels.
-
-No matching labels = no endpoints = no traffic.
-
----
-
-# PART O — FINAL DEMO
-
-### 1. Application
-
-Open TaskBoard and create a task.
-
-### 2. API
-
-Open FastAPI Swagger:
-
-```text
-/docs
-```
-
-Create/read/update/delete a task.
-
-### 3. Database
-
-Show the PostgreSQL `tasks` table.
-
-### 4. Git
-
-Make a small application change and commit it.
-
-### 5. CI
-
-Push to GitHub and show tests running.
-
-### 6. Docker
-
-Show the two images.
-
-### 7. Security
-
-Show Trivy scanning the images.
-
-### 8. Registry
-
-Show the images in GHCR.
-
-### 9. Terraform
-
-Show the AWS infrastructure code.
-
-### 10. Kubernetes
-
-```bash
-kubectl get pods -n taskboard
-kubectl get svc -n taskboard
-```
-
-### 11. Helm
-
-```bash
-helm list -n taskboard
-```
-
-### 12. Ingress
-
-Open the application through the Ingress hostname.
-
-### 13. HPA
-
-```bash
-kubectl get hpa -n taskboard
-```
-
-### 14. Monitoring
-
-Show Prometheus and Grafana.
-
-### 15. Failure simulation
-
-Break a Service/image and troubleshoot it live.
-
----
-
-# FINAL STUDENT PROJECT
-
-Possible domains:
-
-- CRM
-- Inventory management
-- Appointment booking
-- Helpdesk
-- Ecommerce administration
-- Clinic management
-- Restaurant management
-- Employee management
-- Learning management system
-
-Minimum requirements:
-
-### Application
-
-- frontend
-- backend
-- PostgreSQL
-- minimum 4 REST APIs
-- responsive UI
-
-### Engineering
-
-- Git/GitHub
-- automated tests
-- Docker
-
-### DevOps
-
-- GitHub Actions
-- security scan
-- container registry
-- Terraform
-- Kubernetes
-- Helm
-- Ingress
-- HPA
-- Prometheus/Grafana
-
-### Final presentation
-
-Each student must demonstrate:
-
-```text
-Application
-  ↓
-Git commit
-  ↓
-CI pipeline
-  ↓
-Docker image
-  ↓
-Security scan
-  ↓
-Registry
-  ↓
-Terraform infrastructure
-  ↓
-Kubernetes deployment
-  ↓
-Helm
-  ↓
-Ingress
-  ↓
-Autoscaling
-  ↓
-Monitoring
-  ↓
-Troubleshooting
-```
-
-That is the actual objective of Session 21.
+## Demo script
+
+1. Open the app, add a product, receive/ship stock, watch the KPIs change.
+2. Show Swagger at `/docs` and the `products` table in Postgres.
+3. Change something visible (e.g. the subtitle in `frontend/src/App.jsx`), commit and push.
+4. Watch GitHub Actions: tests → build → Trivy → push → Helm deploy.
+5. Show the new SHA-tagged images in GHCR.
+6. `kubectl get pods -n inventory -w`: pods roll to the new image; refresh the browser to see the change.
+7. `helm list -n inventory`, `helm history inventory -n inventory` (and `helm rollback` if wanted).
+8. Run the load test, show Grafana panels moving and `kubectl get hpa` scaling.
+9. Apply a troubleshooting manifest and debug it live.
+10. `terraform destroy`.
