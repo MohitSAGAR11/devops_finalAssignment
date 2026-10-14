@@ -1,0 +1,57 @@
+# Default values for the Inventory Manager chart.
+# CI overrides backend.image.tag / frontend.image.tag with the Git commit SHA on every deploy.
+
+backend:
+  image:
+    repository: ghcr.io/mohitsagar11/inventory-backend
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicaCount: 2
+  port: 8000
+  resources:
+    requests: {cpu: 100m, memory: 192Mi}
+    limits: {cpu: 500m, memory: 512Mi}
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 60
+
+frontend:
+  image:
+    repository: ghcr.io/mohitsagar11/inventory-frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicaCount: 2
+  port: 8080
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 200m, memory: 128Mi}
+
+# Needed only if the GHCR packages are private, e.g. [{name: ghcr-pull}].
+imagePullSecrets: []
+
+postgres:
+  image: postgres:16-alpine
+  database: inventory
+  username: inventory
+  # Override at install time: --set postgres.password=... (never commit a real one).
+  password: inventory
+  persistence:
+    enabled: true
+    size: 5Gi
+    # Empty = cluster default StorageClass (k8s/storageclass-gp3.yaml makes gp3 the default on EKS).
+    storageClass: ""
+
+ingress:
+  enabled: true
+  className: nginx
+  # Empty host = match any hostname, so the ingress-nginx LoadBalancer DNS name works directly.
+  host: ""
+
+monitoring:
+  serviceMonitor:
+    enabled: true
+    interval: 15s
+  grafanaDashboard:
+    enabled: true

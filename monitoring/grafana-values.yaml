@@ -1,0 +1,15 @@
+# kube-prometheus-stack — Grafana side (Grafana is a subchart, so values live under "grafana:").
+grafana:
+  enabled: true
+  # Change via --set grafana.adminPassword=... ; never commit a real password.
+  adminPassword: change-me
+  service:
+    type: ClusterIP
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      # The inventory chart ships its dashboard ConfigMap in the app namespace, not "monitoring".
+      searchNamespace: ALL
+  defaultDashboardsTimezone: browser

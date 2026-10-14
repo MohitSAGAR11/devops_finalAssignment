@@ -1,6 +1,15 @@
+# Lab: a Service whose selector matches no Pods, so it has no endpoints.
+# kubectl apply -f troubleshooting/broken-service.yaml
+# kubectl get endpoints -n inventory inventory-broken-service
+# kubectl get pods -n inventory --show-labels   # compare labels with the selector below
 apiVersion: v1
 kind: Service
-metadata: {name: broken-service, namespace: taskboard}
+metadata:
+  name: inventory-broken-service
+  namespace: inventory
 spec:
-  selector: {app: label-that-does-not-exist}
-  ports: [{port: 8080, targetPort: 8080}]
+  selector:
+    app.kubernetes.io/component: api   # real pods use "backend"
+  ports:
+    - port: 8000
+      targetPort: 8000

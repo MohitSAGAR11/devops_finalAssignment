@@ -1,0 +1,15 @@
+# Local cluster (minikube / Docker Desktop / kind) with the ingress-nginx addon.
+# Add "127.0.0.1 inventory.local" (or the minikube IP) to your hosts file.
+ingress:
+  host: inventory.local
+
+postgres:
+  persistence:
+    size: 1Gi
+
+# Local clusters usually have no Prometheus Operator; enable after installing kube-prometheus-stack.
+monitoring:
+  serviceMonitor:
+    enabled: false
+  grafanaDashboard:
+    enabled: false

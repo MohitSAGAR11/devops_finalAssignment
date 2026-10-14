@@ -1,6 +1,29 @@
-grafana:
-  enabled: true
+# kube-prometheus-stack — Prometheus side.
+# helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+#   -n monitoring --create-namespace \
+#   -f monitoring/prometheus-values.yaml -f monitoring/grafana-values.yaml
 prometheus:
   prometheusSpec:
+    # Pick up ServiceMonitors from every namespace and without the chart's release label,
+    # so the inventory chart's ServiceMonitor (namespace "inventory") is scraped.
     serviceMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelector: {}
     serviceMonitorNamespaceSelector: {}
+    podMonitorSelectorNilUsesHelmValues: false
+    retention: 2d
+    resources:
+      requests: {cpu: 200m, memory: 512Mi}
+      limits: {memory: 1Gi}
+
+alertmanager:
+  enabled: false
+
+# Small classroom cluster: keep the footprint down.
+kubeEtcd:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false

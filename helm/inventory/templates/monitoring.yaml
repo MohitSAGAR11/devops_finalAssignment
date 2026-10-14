@@ -1,0 +1,35 @@
+{{- if .Values.monitoring.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "inventory.fullname" . }}-backend
+  labels:
+    {{- include "inventory.labels" . | nindent 4 }}
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      {{- include "inventory.selectorLabels" (list . "backend") | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.monitoring.serviceMonitor.interval }}
+      relabelings:
+        # A stable label the Grafana dashboard queries on, whatever the release is called.
+        - targetLabel: app
+          replacement: inventory-manager
+{{- end }}
+{{- if .Values.monitoring.grafanaDashboard.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "inventory.fullname" . }}-dashboard
+  labels:
+    {{- include "inventory.labels" . | nindent 4 }}
+    # The Grafana sidecar in kube-prometheus-stack auto-loads ConfigMaps with this label.
+    grafana_dashboard: "1"
+data:
+  inventory-manager.json: |-
+{{ .Files.Get "dashboards/inventory-manager.json" | indent 4 }}
+{{- end }}

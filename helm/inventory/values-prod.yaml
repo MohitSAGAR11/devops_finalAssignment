@@ -1,0 +1,10 @@
+# AWS EKS. Images and tags are set by the CI deploy job.
+backend:
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+
+postgres:
+  persistence:
+    size: 10Gi
