@@ -23,8 +23,9 @@ dist/
 !*.tfvars.example
 crash.log
 
-# Editors / OS
+# Editors / OS / local tool config
 .idea/
 .vscode/
+.claude/
 .DS_Store
 *.log
