@@ -10,13 +10,17 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U inventory -d inventory"]
+      # -h localhost forces a TCP check: during first-boot init Postgres runs a temporary
+      # socket-only server, which a socket check would wrongly report as ready.
+      test: ["CMD-SHELL", "pg_isready -h localhost -U inventory -d inventory"]
       interval: 5s
       timeout: 5s
       retries: 10
+      start_period: 60s
 
   backend:
     build: ./backend
+    restart: on-failure
     environment:
       DATABASE_URL: postgresql+psycopg://inventory:inventory@postgres:5432/inventory
     depends_on:
