@@ -1,5 +1,3 @@
-from contextlib import asynccontextmanager
-
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -8,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .db import Base, engine, get_db
+from .db import get_db
 from .models import Product
 from .schemas import (
     InventoryStatsOut,
@@ -18,15 +16,9 @@ from .schemas import (
     StockAdjustment,
 )
 
-
-@asynccontextmanager
-async def lifespan(_: FastAPI):
-    # Production containers run Alembic before Uvicorn; create_all keeps tests self-contained.
-    Base.metadata.create_all(bind=engine)
-    yield
-
-
-app = FastAPI(title=settings.app_name, version="1.0.0", lifespan=lifespan)
+# The schema is owned by Alembic (`alembic upgrade head` runs before Uvicorn starts);
+# tests create tables themselves in tests/conftest.py.
+app = FastAPI(title=settings.app_name, version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 
