@@ -10,7 +10,7 @@ https://github.com/user-attachments/assets/e9c0a7c2-6075-46f0-8683-6d221fcdde3b
 
 **[▶ Watch the demo video](demo/demo.mp4)**: a code change is committed and pushed, the pipeline tests, scans and deploys it, and the new version appears live on EKS.
 
-**[📊 Presentation slides](demo/Inventory_Manager_DevOps_Capstone.pptx)**: 12-slide walkthrough of the project, with speaker notes.
+**[📊 Presentation slides (PDF)](demo/Inventory_Manager_DevOps_Capstone.pdf)**: 12-slide walkthrough of the project, viewable on GitHub · [download .pptx with speaker notes](demo/Inventory_Manager_DevOps_Capstone.pptx)
 
 ---
 
