@@ -28,9 +28,10 @@ spec:
         runAsGroup: 10001
       initContainers:
         # Wait for PostgreSQL so `alembic upgrade head` doesn't crash-loop on first install.
+        # -U is required: uid 10001 has no passwd entry, and without a user pg_isready gives up ("no attempt").
         - name: wait-for-postgres
           image: {{ .Values.postgres.image }}
-          command: ["sh", "-c", "until pg_isready -h {{ include "inventory.postgresHost" . }} -p 5432; do echo waiting for postgres; sleep 2; done"]
+          command: ["sh", "-c", "until pg_isready -h {{ include "inventory.postgresHost" . }} -p 5432 -U {{ .Values.postgres.username }}; do echo waiting for postgres; sleep 2; done"]
           securityContext:
             allowPrivilegeEscalation: false
       containers:
