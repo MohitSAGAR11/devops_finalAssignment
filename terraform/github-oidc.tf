@@ -1,6 +1,6 @@
 # Lets the GitHub Actions deploy job assume an AWS role with a short-lived OIDC token,
 # so no long-lived AWS access keys are stored in GitHub secrets.
-# Only created when var.github_repository is set (e.g. "MohitSAGAR11/devops-capstone").
+# Only created when var.github_repository is set (e.g. "MohitSAGAR11/devops_finalAssignment").
 
 locals {
   github_enabled = var.github_repository != ""

@@ -12,7 +12,7 @@ node_min_size       = 2
 node_max_size       = 3
 
 # Enables the keyless GitHub Actions deploy role (owner/repo, exactly as on GitHub).
-github_repository = "MohitSAGAR11/inventory-manager-devops"
+github_repository = "MohitSAGAR11/devops_finalAssignment"
 
 # Set to false if this AWS account already has the token.actions.githubusercontent.com provider.
 create_github_oidc_provider = true
