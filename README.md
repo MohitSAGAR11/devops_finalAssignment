@@ -6,11 +6,15 @@ A warehouse stock-control app (React + FastAPI + PostgreSQL) delivered through a
 
 ## 🎬 Demo
 
-[![Watch the demo](screenshots/16-app-via-ingress.png)](demo_video/demo.mp4)
+https://github.com/user-attachments/assets/e9c0a7c2-6075-46f0-8683-6d221fcdde3b
 
 **[▶ Watch the demo video](demo_video/demo.mp4)**: a code change is committed and pushed, the pipeline tests, scans and deploys it, and the new version appears live on EKS.
 
 ---
+
+
+
+
 
 ## Architecture
 
